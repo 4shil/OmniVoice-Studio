@@ -159,38 +159,38 @@ async def dub_generate(job_id: str, req: DubRequest):
                         duration=dur_s, num_step=nstep, guidance_scale=cfg,
                         speed=spd, denoise=True, postprocess_output=True,
                     )
-                    audio_out = audios[0]
-                    sr = _model.sampling_rate if hasattr(_model, 'sampling_rate') else 24000
-
-                    # Apply per-segment DSP effect preset (default: broadcast)
-                    seg_effect_preset = getattr(seg, "effect_preset", None) or "broadcast"
-                    if seg_effect_preset == "raw":
-                        # Raw: skip all DSP — return raw model output
-                        return audio_out
-
-                    mastered_audio = apply_mastering(audio_out, sample_rate=sr)
-                    effect_chain = get_effect_chain(seg_effect_preset)
-                    if effect_chain:
-                        mastered_audio = apply_effects_chain(
-                            mastered_audio,
-                            sample_rate=sr,
-                            chain=effect_chain,
-                        )
-
-                    return normalize_audio(mastered_audio, target_dBFS=-2.0)
-                except Exception as e:
+                except (torch.cuda.OutOfMemoryError, torch.mps.MPSError) as e:
                     import gc
                     gc.collect()
                     if torch.backends.mps.is_available():
                         torch.mps.empty_cache()
                     elif torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                    # User-facing: what happened · why · what to do.
                     raise RuntimeError(
                         f"Ran out of GPU memory generating this segment. "
                         f"Try the Flush button in the header to free VRAM, or switch to CPU in Settings. "
                         f"Underlying error: {e}"
                     )
+
+                audio_out = audios[0]
+                sr = _model.sampling_rate if hasattr(_model, 'sampling_rate') else 24000
+
+                # Apply per-segment DSP effect preset (default: broadcast)
+                seg_effect_preset = getattr(seg, "effect_preset", None) or "broadcast"
+                if seg_effect_preset == "raw":
+                    # Raw: skip all DSP — return raw model output
+                    return audio_out
+
+                mastered_audio = apply_mastering(audio_out, sample_rate=sr)
+                effect_chain = get_effect_chain(seg_effect_preset)
+                if effect_chain:
+                    mastered_audio = apply_effects_chain(
+                        mastered_audio,
+                        sample_rate=sr,
+                        chain=effect_chain,
+                    )
+
+                return normalize_audio(mastered_audio, target_dBFS=-2.0)
 
             seg_instruct = seg.instruct or req.instruct
             seg_profile = seg.profile_id or None
