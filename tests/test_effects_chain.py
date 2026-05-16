@@ -99,18 +99,21 @@ class TestApplyEffectsChain:
         chain = get_effect_chain("podcast")
         result = apply_effects_chain(audio, sample_rate=24000, chain=chain)
         assert isinstance(result, torch.Tensor)
+        assert result.shape == audio.shape
 
     def test_warm_preset_returns_tensor(self):
         audio = _make_test_audio()
         chain = get_effect_chain("warm")
         result = apply_effects_chain(audio, sample_rate=24000, chain=chain)
         assert isinstance(result, torch.Tensor)
+        assert result.shape == audio.shape
 
     def test_bright_preset_returns_tensor(self):
         audio = _make_test_audio()
         chain = get_effect_chain("bright")
         result = apply_effects_chain(audio, sample_rate=24000, chain=chain)
         assert isinstance(result, torch.Tensor)
+        assert result.shape == audio.shape
 
     def test_all_presets_produce_output(self):
         """Smoke test: every preset processes without error."""
