@@ -107,7 +107,7 @@ async def dub_generate(job_id: str, req: DubRequest):
                 sync_scores.append(1.0)
                 continue
 
-            def _gen(text, lang, instruct_str, dur_s, nstep, cfg, spd, profile_id=None):
+            def _gen(text, lang, instruct_str, dur_s, nstep, cfg, spd, profile_id, effect_preset):
                 ref_audio = None
                 ref_text = None
                 used_seed = None
@@ -176,7 +176,7 @@ async def dub_generate(job_id: str, req: DubRequest):
                 sr = _model.sampling_rate if hasattr(_model, 'sampling_rate') else 24000
 
                 # Apply per-segment DSP effect preset (default: broadcast)
-                seg_effect_preset = getattr(seg, "effect_preset", None) or "broadcast"
+                seg_effect_preset = effect_preset or "broadcast"
                 if seg_effect_preset == "raw":
                     # Raw: skip all DSP — return raw model output
                     return audio_out
@@ -226,10 +226,11 @@ async def dub_generate(job_id: str, req: DubRequest):
                 # flag to restore num_step=req.num_step quality.
                 _num_step = 8 if req.preview else req.num_step
                 _t_tts_0 = time.perf_counter()
+                seg_effect_preset = getattr(seg, "effect_preset", None) or "broadcast"
                 audio_tensor = await loop.run_in_executor(
                     _gpu_pool, _gen,
                     seg.text, seg_lang, seg_instruct, seg_duration,
-                    _num_step, req.guidance_scale, seg_speed, seg_profile,
+                    _num_step, req.guidance_scale, seg_speed, seg_profile, seg_effect_preset,
                 )
                 _t_tts += time.perf_counter() - _t_tts_0
 
