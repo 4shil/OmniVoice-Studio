@@ -144,16 +144,19 @@ async def generate_segments_batched(
                     postprocess_output=True,
                 )
                 audio_out = audios[0]
-                mastered = apply_mastering(audio_out, sample_rate=sr)
 
                 # Apply per-segment DSP effect preset (default: broadcast)
                 seg_effect_preset = getattr(s, "effect_preset", None) or "broadcast"
-                if seg_effect_preset != "raw":
-                    effect_chain = get_effect_chain(seg_effect_preset)
-                    if effect_chain:
-                        mastered = apply_effects_chain(
-                            mastered, sample_rate=sr, chain=effect_chain
-                        )
+                if seg_effect_preset == "raw":
+                    # Raw: skip all DSP — return raw model output
+                    return audio_out
+
+                mastered = apply_mastering(audio_out, sample_rate=sr)
+                effect_chain = get_effect_chain(seg_effect_preset)
+                if effect_chain:
+                    mastered = apply_effects_chain(
+                        mastered, sample_rate=sr, chain=effect_chain
+                    )
 
                 return normalize_audio(mastered, target_dBFS=-2.0)
 

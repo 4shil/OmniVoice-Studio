@@ -48,16 +48,28 @@ def _run_inference(
         audio_out = audios[0]
         
         sr = model.sampling_rate if hasattr(model, 'sampling_rate') else 24000
-        mastered_audio = apply_mastering(audio_out, sample_rate=sr)
 
         # Apply DSP effect preset
         _effect_preset = effect_preset or "broadcast"
-        if _effect_preset != "raw":
-            _chain = get_effect_chain(_effect_preset)
-            if _chain:
-                mastered_audio = apply_effects_chain(
-                    mastered_audio, sample_rate=sr, chain=_chain,
-                )
+
+        # Validate preset ID
+        from services.audio_dsp import EFFECT_PRESETS
+        if _effect_preset not in EFFECT_PRESETS:
+            raise ValueError(
+                f"Unknown effect preset: {_effect_preset!r}. "
+                f"Valid: {list(EFFECT_PRESETS.keys())}"
+            )
+
+        if _effect_preset == "raw":
+            # Raw: skip all DSP — return raw model output
+            return audio_out
+
+        mastered_audio = apply_mastering(audio_out, sample_rate=sr)
+        _chain = get_effect_chain(_effect_preset)
+        if _chain:
+            mastered_audio = apply_effects_chain(
+                mastered_audio, sample_rate=sr, chain=_chain,
+            )
 
         return normalize_audio(mastered_audio, target_dBFS=-2.0)
         

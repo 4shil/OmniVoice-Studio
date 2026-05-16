@@ -3,18 +3,13 @@ Tests for the audio effects chain DSP pipeline.
 
 Pure functions — no GPU or model loading required.
 Tests run in seconds on any machine.
+
+Note: sys.path for backend imports is handled by tests/conftest.py.
 """
 
 import pytest
 import torch
 import math
-import sys
-import os
-
-# Ensure the backend package is importable from tests/
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
-
-# Skip all tests if pedalboard is not installed
 pedalboard = pytest.importorskip("pedalboard")
 
 from services.audio_dsp import (
