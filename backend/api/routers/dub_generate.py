@@ -170,7 +170,7 @@ async def dub_generate(job_id: str, req: DubRequest):
                         f"Ran out of GPU memory generating this segment. "
                         f"Try the Flush button in the header to free VRAM, or switch to CPU in Settings. "
                         f"Underlying error: {e}"
-                    )
+                    ) from e
 
                 audio_out = audios[0]
                 sr = _model.sampling_rate if hasattr(_model, 'sampling_rate') else 24000
