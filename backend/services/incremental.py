@@ -20,7 +20,7 @@ import hashlib
 import json
 
 
-_GEN_INPUT_FIELDS = ("text", "target_lang", "profile_id", "instruct", "speed", "direction")
+_GEN_INPUT_FIELDS = ("text", "target_lang", "profile_id", "instruct", "speed", "direction", "effect_preset")
 
 
 def segment_fingerprint(seg: dict) -> str:

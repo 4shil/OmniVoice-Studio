@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from core.db import db_conn
 from core.config import OUTPUTS_DIR, VOICES_DIR
 from services.model_manager import get_model, _gpu_pool
-from services.audio_dsp import apply_mastering, normalize_audio
+# audio_dsp imported in _run_inference
 from core import event_bus
 
 router = APIRouter()
@@ -24,8 +24,9 @@ def _run_inference(
     model, text, language, ref_audio_path, ref_text, instruct, duration,
     num_step, guidance_scale, speed, t_shift, denoise,
     postprocess_output, layer_penalty_factor, position_temperature,
-    class_temperature, used_seed,
+    class_temperature, used_seed, effect_preset="broadcast",
 ):
+    from services.audio_dsp import apply_mastering, normalize_audio, apply_effects_chain, get_effect_chain
     import torch
     try:
         if used_seed is not None:
@@ -46,7 +47,18 @@ def _run_inference(
         )
         audio_out = audios[0]
         
-        mastered_audio = apply_mastering(audio_out, sample_rate=model.sampling_rate if hasattr(model, 'sampling_rate') else 24000)
+        sr = model.sampling_rate if hasattr(model, 'sampling_rate') else 24000
+        mastered_audio = apply_mastering(audio_out, sample_rate=sr)
+
+        # Apply DSP effect preset
+        _effect_preset = effect_preset or "broadcast"
+        if _effect_preset != "raw":
+            _chain = get_effect_chain(_effect_preset)
+            if _chain:
+                mastered_audio = apply_effects_chain(
+                    mastered_audio, sample_rate=sr, chain=_chain,
+                )
+
         return normalize_audio(mastered_audio, target_dBFS=-2.0)
         
     except ValueError as e:
@@ -84,6 +96,7 @@ async def generate_speech(
     class_temperature: Optional[float] = Form(None),
     profile_id: Optional[str] = Form(None),
     seed: Optional[int] = Form(None),
+    effect_preset: str = Form("broadcast"),
 ):
     _model = await get_model()
 
@@ -137,7 +150,7 @@ async def generate_speech(
             _model, text, language, ref_audio_path, ref_text, instruct, duration,
             num_step, guidance_scale, speed, t_shift, denoise,
             postprocess_output, layer_penalty_factor, position_temperature,
-            class_temperature, used_seed,
+            class_temperature, used_seed, effect_preset,
         )
         gen_time = round(time.time() - start_time, 2)
 

@@ -13,7 +13,7 @@ from core.config import DUB_DIR, VOICES_DIR
 from core.tasks import task_manager
 from schemas.requests import DubRequest
 from services.model_manager import get_model, _gpu_pool
-from services.audio_dsp import apply_mastering, normalize_audio
+from services.audio_dsp import apply_mastering, normalize_audio, apply_effects_chain, get_effect_chain
 from services.rvc import apply_rvc, is_enabled as rvc_is_enabled
 from services.incremental import segment_fingerprint
 from services.watermark import embed_watermark
@@ -160,7 +160,20 @@ async def dub_generate(job_id: str, req: DubRequest):
                         speed=spd, denoise=True, postprocess_output=True,
                     )
                     audio_out = audios[0]
-                    mastered_audio = apply_mastering(audio_out, sample_rate=_model.sampling_rate if hasattr(_model, 'sampling_rate') else 24000)
+                    sr = _model.sampling_rate if hasattr(_model, 'sampling_rate') else 24000
+                    mastered_audio = apply_mastering(audio_out, sample_rate=sr)
+
+                    # Apply per-segment DSP effect preset (default: broadcast)
+                    seg_effect_preset = getattr(seg, "effect_preset", None) or "broadcast"
+                    if seg_effect_preset != "raw":
+                        effect_chain = get_effect_chain(seg_effect_preset)
+                        if effect_chain:
+                            mastered_audio = apply_effects_chain(
+                                mastered_audio,
+                                sample_rate=sr,
+                                chain=effect_chain,
+                            )
+
                     return normalize_audio(mastered_audio, target_dBFS=-2.0)
                 except Exception as e:
                     import gc
@@ -247,6 +260,7 @@ async def dub_generate(job_id: str, req: DubRequest):
                         "instruct": getattr(seg, "instruct", None),
                         "speed": getattr(seg, "speed", None),
                         "direction": getattr(seg, "direction", None),
+                        "effect_preset": getattr(seg, "effect_preset", None),
                     })
                 except Exception as e:
                     logger.debug("seg fingerprint skipped for %s: %s", seg_id, e)
