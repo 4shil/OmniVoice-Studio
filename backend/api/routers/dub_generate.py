@@ -159,7 +159,7 @@ async def dub_generate(job_id: str, req: DubRequest):
                         duration=dur_s, num_step=nstep, guidance_scale=cfg,
                         speed=spd, denoise=True, postprocess_output=True,
                     )
-                except (torch.cuda.OutOfMemoryError, torch.mps.MPSError) as e:
+                except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
                     import gc
                     gc.collect()
                     if torch.backends.mps.is_available():
