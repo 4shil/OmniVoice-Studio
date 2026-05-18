@@ -4,7 +4,7 @@ import uuid
 import psutil
 import asyncio
 import logging
-from fastapi import APIRouter, File, UploadFile, HTTPException, Query
+from fastapi import APIRouter, File, UploadFile, HTTPException, Query, Request
 from api.schemas import SysinfoResponse, SystemInfoResponse, ModelStatusResponse, LogsResponse, FlushMemoryResponse
 from fastapi.responses import FileResponse, StreamingResponse
 import torch
@@ -22,6 +22,20 @@ _is_mac = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
 _is_cuda = torch.cuda.is_available()
 # Prime psutil's internal CPU counter so the first non-blocking call returns useful data
 psutil.cpu_percent(interval=None)
+
+
+def _has_hf_token() -> bool:
+    # Prelude to AUTH-01..06 cascade. Today: env var OR canonical HF file
+    # (`~/.cache/huggingface/token`, written by `huggingface-cli login` or the
+    # app's "Save token" action). Phase 1 token_resolver.py adds the
+    # SQLite-app-store layer + on-failure fallback on top of this.
+    if os.environ.get("HF_TOKEN"):
+        return True
+    try:
+        from huggingface_hub import get_token
+        return bool(get_token())
+    except Exception:
+        return False
 
 @router.get("/model/status", response_model=ModelStatusResponse)
 def model_status():
@@ -131,7 +145,7 @@ def system_info():
             "model_checkpoint": os.environ.get("OMNIVOICE_MODEL", "k2-fsa/OmniVoice"),
             "asr_model": os.environ.get("ASR_MODEL", "Systran/faster-whisper-large-v3"),
             "translate_provider": os.environ.get("TRANSLATE_PROVIDER", "google"),
-            "has_hf_token": bool(os.environ.get("HF_TOKEN")),
+            "has_hf_token": _has_hf_token(),
             "device": get_best_device(),
             "python": sys.version.split()[0],
             "platform": sys.platform,
@@ -430,8 +444,8 @@ def system_notifications():
     """
     notes = []
 
-    # 1. Missing HF_TOKEN
-    if not os.environ.get("HF_TOKEN"):
+    # 1. Missing HF_TOKEN (env var OR canonical ~/.cache/huggingface/token)
+    if not _has_hf_token():
         notes.append({
             "id": "hf-token-missing",
             "level": "warn",
@@ -508,7 +522,7 @@ def system_notifications():
 
 
 @router.post("/system/set-env")
-async def set_env_var(body: dict):
+async def set_env_var(request: Request, body: dict):
     """Set an environment variable at runtime.
 
     Currently supports:
@@ -518,6 +532,9 @@ async def set_env_var(body: dict):
     The value is set on os.environ for the running process.
     For persistence across restarts, users should set it in their shell profile.
     """
+    host = request.client.host if request.client else None
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(status_code=403, detail="set-env requires loopback origin")
     ALLOWED_KEYS = {"HF_TOKEN", "TRANSLATE_API_KEY"}
     key = body.get("key", "")
     value = body.get("value", "")
@@ -599,3 +616,13 @@ async def _do_clean_audio(audio, tmp_dir, clean_id):
 
     return FileResponse(final_path, media_type="audio/wav", filename=clean_filename,
                         headers={"X-Clean-Filename": clean_filename})
+
+
+@router.get("/system/asr-backends")
+def asr_backends():
+    """List all registered ASR backends and their availability."""
+    from services.asr_backend import list_backends, active_backend_id
+    return {
+        "active": active_backend_id(),
+        "backends": list_backends(),
+    }

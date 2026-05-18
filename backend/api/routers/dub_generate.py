@@ -159,44 +159,82 @@ async def dub_generate(job_id: str, req: DubRequest):
                         duration=dur_s, num_step=nstep, guidance_scale=cfg,
                         speed=spd, denoise=True, postprocess_output=True,
                     )
-                except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+                    audio_out = audios[0]
+                    sr = _model.sampling_rate if hasattr(_model, 'sampling_rate') else 24000
+
+                    # Apply per-segment DSP effect preset (default: broadcast)
+                    seg_effect_preset = effect_preset or "broadcast"
+                    if seg_effect_preset == "raw":
+                        return audio_out
+
+                    mastered_audio = apply_mastering(audio_out, sample_rate=sr)
+                    effect_chain = get_effect_chain(seg_effect_preset)
+                    if effect_chain:
+                        mastered_audio = apply_effects_chain(
+                            mastered_audio,
+                            sample_rate=sr,
+                            chain=effect_chain,
+                        )
+                    return normalize_audio(mastered_audio, target_dBFS=-2.0)
+                except Exception as e:
+                    is_oom = (
+                        isinstance(e, torch.cuda.OutOfMemoryError)
+                        or "out of memory" in str(e).lower()
+                        or "CUDA error" in str(e)
+                    )
                     import gc
                     gc.collect()
-                    if torch.backends.mps.is_available():
-                        torch.mps.empty_cache()
-                    elif torch.cuda.is_available():
+                    if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                    raise RuntimeError(
-                        f"Ran out of GPU memory generating this segment. "
-                        f"Try the Flush button in the header to free VRAM, or switch to CPU in Settings. "
-                        f"Underlying error: {e}"
-                    ) from e
+                    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                        torch.mps.empty_cache()
 
-                audio_out = audios[0]
-                sr = _model.sampling_rate if hasattr(_model, 'sampling_rate') else 24000
+                    if not is_oom:
+                        raise
 
-                # Apply per-segment DSP effect preset (default: broadcast)
-                seg_effect_preset = effect_preset or "broadcast"
-                if seg_effect_preset == "raw":
-                    # Raw: skip all DSP — return raw model output
-                    return audio_out
-
-                mastered_audio = apply_mastering(audio_out, sample_rate=sr)
-                effect_chain = get_effect_chain(seg_effect_preset)
-                if effect_chain:
-                    mastered_audio = apply_effects_chain(
-                        mastered_audio,
-                        sample_rate=sr,
-                        chain=effect_chain,
+                    retry_steps = min(nstep, 8)
+                    logger.warning(
+                        "OOM on segment (nstep=%d), retrying with %d steps after cache flush",
+                        nstep, retry_steps,
                     )
+                    try:
+                        audios = _model.generate(
+                            text=text, language=lang if lang != "Auto" else None,
+                            ref_audio=ref_audio, ref_text=ref_text,
+                            instruct=instruct_str if instruct_str else None,
+                            duration=dur_s, num_step=retry_steps, guidance_scale=cfg,
+                            speed=spd, denoise=True, postprocess_output=True,
+                        )
+                        audio_out = audios[0]
+                        sr = _model.sampling_rate if hasattr(_model, 'sampling_rate') else 24000
 
-                return normalize_audio(mastered_audio, target_dBFS=-2.0)
+                        seg_effect_preset = effect_preset or "broadcast"
+                        if seg_effect_preset == "raw":
+                            return audio_out
 
-            seg_instruct = seg.instruct or req.instruct
+                        mastered_audio = apply_mastering(audio_out, sample_rate=sr)
+                        effect_chain = get_effect_chain(seg_effect_preset)
+                        if effect_chain:
+                            mastered_audio = apply_effects_chain(
+                                mastered_audio,
+                                sample_rate=sr,
+                                chain=effect_chain,
+                            )
+                        return normalize_audio(mastered_audio, target_dBFS=-2.0)
+                    except Exception as retry_err:
+                        raise RuntimeError(
+                            f"Ran out of GPU memory generating this segment. "
+                            f"Retried with {retry_steps} steps but still failed. "
+                            f"Try the Flush button in the header to free VRAM, "
+                            f"or switch to CPU in Settings. "
+                            f"Underlying error: {retry_err}"
+                        ) from retry_err
+
             seg_profile = seg.profile_id or None
             seg_speed = seg.speed if hasattr(seg, 'speed') and seg.speed is not None else req.speed
             seg_lang = seg.target_lang if getattr(seg, 'target_lang', None) else req.language
 
+            seg_instruct = seg.instruct or req.instruct
             # Phase 4.2 — if the segment carries a free-form direction, parse it
             # and append the taxonomy instruct (e.g. "urgent, surprised") on top
             # of whatever instruct was already set. Also apply the director's

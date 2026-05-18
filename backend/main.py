@@ -13,6 +13,10 @@ try:
     import dotenv
 
     dotenv.load_dotenv()
+    # Also load .env from the project root (parent of backend/)
+    _project_env = os.path.join(os.path.dirname(_backend_dir), ".env")
+    if os.path.isfile(_project_env):
+        dotenv.load_dotenv(_project_env, override=False)
     # Also load the durable per-user config so env vars set once survive
     # Tauri/Finder launches that don't inherit a shell environment.
     _user_env = os.path.expanduser("~/.config/omnivoice/env")
@@ -23,7 +27,7 @@ except ImportError:
 
 # ── cuDNN 8 library preload ─────────────────────────────────────────────
 # CTranslate2 (used by faster-whisper / WhisperX) requires cuDNN 8, but
-# PyTorch 2.8+ pulls cuDNN 9. scripts/setup_cudnn.py installs cuDNN 8
+# PyTorch 2.8+ pulls cuDNN 9. scripts/setup.py installs cuDNN 8
 # side-by-side into cudnn8_compat/ (survives `uv sync`). We preload all
 # cuDNN 8 libs via ctypes so CTranslate2's dlopen/LoadLibrary finds them.
 if sys.platform != "darwin":  # macOS has no CUDA
@@ -215,6 +219,7 @@ from api.routers import (
     openai_compat,
     tts_stream,
     marketplace,
+    sonitranslate,
 )
 from utils import hf_progress
 
@@ -426,6 +431,7 @@ app.include_router(capture_ws.router)
 app.include_router(openai_compat.router)
 app.include_router(tts_stream.router)
 app.include_router(marketplace.router)
+app.include_router(sonitranslate.router)
 
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.exists(frontend_path):
@@ -438,7 +444,52 @@ else:
 
 
 if __name__ == "__main__":
+    import argparse
+    import sys
+    import threading
+    import time
+    import urllib.request
     import uvicorn
+
+    parser = argparse.ArgumentParser(prog="omnivoice-backend")
+    parser.add_argument(
+        "--health-check",
+        action="store_true",
+        help="Boot the server, poll /health, exit 0 on success / 1 on timeout. "
+             "Used by the release-time installer smoke step in .github/workflows/release.yml.",
+    )
+    args, _unknown = parser.parse_known_args()
+
+    if args.health_check:
+        HEALTH_URL = "http://127.0.0.1:3900/health"
+        TIMEOUT_S = 60
+        INTERVAL_S = 5
+
+        def _serve():
+            # log_level="warning" silences the per-request access log spam
+            # so the smoke output stays readable in GH Actions.
+            uvicorn.run(app, host="127.0.0.1", port=3900, log_level="warning")
+
+        t = threading.Thread(target=_serve, daemon=True)
+        t.start()
+
+        elapsed = 0
+        while elapsed < TIMEOUT_S:
+            try:
+                with urllib.request.urlopen(HEALTH_URL, timeout=2) as resp:
+                    if resp.status == 200:
+                        print(f"OK — /health responded 200 after {elapsed}s", flush=True)
+                        sys.exit(0)
+            except Exception:
+                pass
+            time.sleep(INTERVAL_S)
+            elapsed += INTERVAL_S
+
+        print(
+            f"FAIL — /health did not respond 200 within {TIMEOUT_S}s",
+            file=sys.stderr, flush=True,
+        )
+        sys.exit(1)
 
     # Port 3900 picked to dodge common 8000 conflicts (Django/Rails/Jupyter).
     # Rust sidecar launcher in lib.rs::BACKEND_PORT must stay in sync.
